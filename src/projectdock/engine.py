@@ -16,6 +16,8 @@ from pathlib import Path
 
 from .project import load, recipes
 from .storage import DockError, lock, new_id, read_json, settings_path, write_json
+from . import validation
+from .processes import ProcessTree
 
 
 def trust_digest(root: Path):
@@ -79,11 +81,14 @@ def expand(value: str, root: Path, config: dict, environment: dict, profile: dic
             raise DockError(f"Configura el ejecutable del conector {name}")
         executable = executable.replace("{root}", str(root)).replace("{python}", project_python(root, config))
         local = root / ".project/tools" / name / executable
-        global_path = shutil.which(executable)
+        global_path = shutil.which(executable, path=environment.get("PATH"))
         priority = setting.get("priority", "local-first")
         candidates = [global_path, str(local) if local.is_file() else None] if priority == "global-first" else [str(local) if local.is_file() else None, global_path]
         if priority == "manual":
-            candidates = [executable if Path(executable).is_file() else None]
+            manual = Path(executable)
+            if not manual.is_absolute():
+                manual = root / manual
+            candidates = [str(manual) if manual.is_file() else None]
         found = next((item for item in candidates if item), None)
         if not found:
             raise DockError(f"No se encuentra la herramienta {name}: {executable}")
@@ -102,13 +107,13 @@ def plan(root: Path, action=None, profile_name=None, extra=None, replace_args=Fa
     profile_name = profile_name or config["default_profile"]
     if not re.fullmatch(r"[A-Za-z0-9_-]+", profile_name):
         raise DockError("Nombre de perfil inválido")
-    profile = read_json(root / ".project/profiles" / f"{profile_name}.json")
+    profile = validation.profile(read_json(root / ".project/profiles" / f"{profile_name}.json"))
     if recipe.get("tool"):
         tool = recipe["tool"]
         enabled = profile.get("tools", {}).get(tool, {}).get("enabled", config.get("tools", {}).get(tool, {}).get("enabled", False))
         if not enabled:
             raise DockError(f"Herramienta deshabilitada: {tool}")
-    if recipe.get("steps"):
+    if "steps" in recipe:
         return {"action": action, "profile": profile_name, "steps": recipe["steps"], "mode": recipe.get("mode", "sequence"), "recipe": recipe}
     command = recipe.get("command", [])
     if not isinstance(command, list) or not command or not all(isinstance(s, str) for s in command):
@@ -199,11 +204,17 @@ def plan(root: Path, action=None, profile_name=None, extra=None, replace_args=Fa
         for key, value in layer.items():
             environment[key] = expand(str(value), root, config, environment, profile, secrets)
     resolved = [expand(s, root, config, environment, profile, secrets) for s in [*command, *args]]
+    cwd = Path(expand(recipe.get("cwd", "{root}"), root, config, environment, profile, secrets))
+    if not cwd.is_absolute():
+        cwd = root / cwd
+    cwd = cwd.resolve()
+    if not cwd.is_dir():
+        raise DockError(f"Directorio de trabajo inexistente: {cwd}")
     executable = shutil.which(resolved[0], path=environment.get("PATH"))
     if not executable:
         candidate = Path(resolved[0])
         if not candidate.is_absolute():
-            candidate = root / candidate
+            candidate = cwd / candidate
         if candidate.is_file():
             executable = str(candidate)
     if not executable:
@@ -214,11 +225,6 @@ def plan(root: Path, action=None, profile_name=None, extra=None, replace_args=Fa
         if any(any(c in s for c in '\r\n&|<>^%!\"') for s in resolved):
             raise DockError("Argumento no seguro para un archivo CMD/BAT; usa un ejecutable directo")
         resolved = [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", " ".join('"' + s + '"' for s in resolved)]
-    cwd = Path(expand(recipe.get("cwd", "{root}"), root, config, environment, profile, secrets))
-    if not cwd.is_absolute():
-        cwd = root / cwd
-    if not cwd.is_dir():
-        raise DockError(f"Directorio de trabajo inexistente: {cwd}")
     return {"action": action, "profile": profile_name, "command": resolved, "cwd": str(cwd), "environment": environment, "secrets": secrets, "recipe": recipe}
 
 
@@ -230,7 +236,15 @@ def redact(text: str, secrets):
 
 
 def public_plan(value):
-    return {key: json.loads(redact(json.dumps(item), value.get("secrets", []))) for key, item in value.items() if key in {"action", "profile", "command", "cwd", "steps", "mode"}}
+    def clean(item):
+        if isinstance(item, str):
+            return redact(item, value.get("secrets", []))
+        if isinstance(item, list):
+            return [clean(part) for part in item]
+        if isinstance(item, dict):
+            return {key: clean(part) for key, part in item.items()}
+        return item
+    return {key: clean(item) for key, item in value.items() if key in {"action", "profile", "command", "cwd", "steps", "mode"}}
 
 
 def lua_worker():
@@ -238,7 +252,7 @@ def lua_worker():
     payload = json.load(sys.stdin)
     lua = LuaRuntime(max_memory=8 * 1024 * 1024, register_eval=False, register_builtins=False)
     # Solo bibliotecas de cálculo; no acceso a Python, archivos, módulos o procesos.
-    for name in ["python", "os", "io", "package", "require", "dofile", "loadfile", "debug", "load"]:
+    for name in ["python", "os", "io", "package", "require", "dofile", "loadfile", "debug", "load", "print", "warn"]:
         lua.globals()[name] = None
     def table(value):
         if isinstance(value, dict):
@@ -290,9 +304,27 @@ def stop(root: Path, action=None):
                 write_json(path.with_suffix(".stop"), {"stop": True})
 
 
+def preflight(root, action=None, profile=None, chain=()):
+    """Valida el grafo completo antes de iniciar el primer proceso del grupo."""
+    config = load(root)
+    action = action or config["default_action"]
+    if action in chain:
+        raise DockError("Dependencia circular: " + " → ".join([*chain, action]))
+    all_recipes = recipes(root)
+    if action not in all_recipes:
+        raise DockError(f"No existe la receta '{action}'")
+    for step in all_recipes[action].get("steps", []):
+        preflight(root, step, profile, (*chain, action))
+    # Las hojas se resuelven al ejecutarlas: un paso anterior puede crear su entorno.
+
+
 def run(root: Path, action=None, profile=None, extra=None, replace_args=False, output=print, cancel=None, chain=()):
     import psutil
     require_trust(root)
+    if cancel and cancel.is_set():
+        return 130
+    if not chain:
+        preflight(root, action, profile)
     resolved = plan(root, action, profile, extra, replace_args, apply_rules=True)
     action = resolved["action"]
     if action in chain:
@@ -337,9 +369,31 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
     logs.mkdir(parents=True, exist_ok=True)
     started = time.monotonic()
     process = None
+    tree = None
     code = 1
     log_limit = int(load(root).get("logs", {}).get("max_bytes_per_run", 10 * 1024 * 1024))
     written = 0
+    reader_stop = threading.Event()
+    reader = None
+    pending = ""
+    secrets = resolved["secrets"]
+    secret_tail = max([len(s) for s in secrets] or [1]) - 1
+    def clean_chunk(chunk, final=False):
+        nonlocal pending
+        pending += chunk
+        cut = len(pending) if final else max(0, len(pending) - secret_tail)
+        if not final:
+            for secret in secrets:
+                if not secret:
+                    continue
+                start = pending.find(secret)
+                while start != -1:
+                    if start < cut < start + len(secret):
+                        cut = start
+                    start = pending.find(secret, start + 1)
+        clean = redact(pending[:cut], secrets)
+        pending = pending[cut:]
+        return clean
     try:
         invocation = resolved["command"]
         if os.name == "nt" and invocation[1:4] == ["/d", "/s", "/c"]:
@@ -348,50 +402,97 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
         process = subprocess.Popen(invocation, cwd=resolved["cwd"], env=resolved["environment"], stdin=None if recipe.get("interactive") else subprocess.DEVNULL,
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
             creationflags=0x08000000 if os.name == "nt" else 0, start_new_session=os.name != "nt")
+        tree = ProcessTree(process)
         record.update(status="RUNNING", child_pid=process.pid)
         write_json(state_file, record)
-        messages = queue.Queue()
+        messages = queue.Queue(maxsize=128)
+        def send(item):
+            while not reader_stop.is_set():
+                try:
+                    messages.put(item, timeout=0.1)
+                    return
+                except queue.Full:
+                    continue
         def read_output():
-            for line in process.stdout:
-                messages.put(line)
-            messages.put(None)
-        threading.Thread(target=read_output, daemon=True).start()
+            try:
+                while not reader_stop.is_set():
+                    line = process.stdout.readline(8192)
+                    if not line:
+                        break
+                    send(line)
+            except (OSError, ValueError):
+                pass
+            finally:
+                send(None)
+        reader = threading.Thread(target=read_output, daemon=True)
+        reader.start()
         done = False
-        with (logs / f"{run_id}.log").open("w", encoding="utf-8") as stream:
-            while not done:
+        with (logs / f"{run_id}.log").open("wb") as stream:
+            def emit(line):
+                nonlocal written
+                if not line:
+                    return
+                encoded = line.encode("utf-8")
+                if written < log_limit:
+                    # No corta una secuencia UTF-8 al alcanzar el límite.
+                    data = encoded[:log_limit - written].decode("utf-8", errors="ignore").encode("utf-8")
+                    stream.write(data)
+                    stream.flush()
+                    written += len(data)
+                output(line.rstrip("\r\n"))
+            while not done or process.poll() is None:
                 timeout = recipe.get("timeout", 0)
                 if (cancel and cancel.is_set()) or state_file.with_suffix(".stop").exists() or (timeout and time.monotonic() - started > timeout):
-                    terminate_tree(process.pid)
+                    tree.terminate()
                     record["reason"] = "cancelled" if not timeout or time.monotonic() - started <= timeout else "timeout"
                     code = 130 if record["reason"] == "cancelled" else 124
+                    emit(clean_chunk("", final=True))
                     break
+                if process.poll() is not None and not done:
+                    # No mantener huérfanos que retengan la salida del padre.
+                    tree.terminate()
                 try:
                     line = messages.get(timeout=0.1)
                 except queue.Empty:
                     continue
                 if line is None:
                     done = True
+                    emit(clean_chunk("", final=True))
                 else:
-                    line = redact(line, resolved["secrets"])
-                    if written < log_limit:
-                        stream.write(line[:max(0, log_limit - written)])
-                        stream.flush()
-                        written += len(line)
-                    output(line.rstrip())
+                    emit(clean_chunk(line))
             if done:
                 code = process.wait()
     except KeyboardInterrupt:
         code = 130
         if process:
-            terminate_tree(process.pid)
+            tree.terminate() if tree else terminate_tree(process.pid)
+    except Exception as exc:
+        if process:
+            tree.terminate() if tree else terminate_tree(process.pid)
+        record["reason"] = redact(str(exc), secrets)
+        if not (logs / f"{run_id}.log").exists():
+            (logs / f"{run_id}.log").write_text(record["reason"] + "\n", encoding="utf-8")
+        raise DockError(record["reason"]) from exc
     finally:
+        reader_stop.set()
+        if tree:
+            tree.close()
+        if process:
+            if process.poll() is None:
+                terminate_tree(process.pid)
+            process.wait(timeout=5)
+        if reader:
+            reader.join(timeout=1)
+        if process and process.stdout and (not reader or not reader.is_alive()):
+            process.stdout.close()
         record.update(status="STOPPED" if code == 130 else "EXITED" if code == 0 else "FAILED", exit_code=code, duration=round(time.monotonic() - started, 3))
         write_json(state_file, record)
         write_json(logs / f"{run_id}.json", record)
         state_file.with_suffix(".stop").unlink(missing_ok=True)
         keep = max(1, int(load(root).get("logs", {}).get("keep_runs", 100)))
-        for old in sorted(logs.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[keep:]:
-            old.with_suffix(".log").unlink(missing_ok=True)
-            (state_dir / old.name).unlink(missing_ok=True)
-            old.unlink(missing_ok=True)
+        with lock(logs / "retention.lock"):
+            for old in sorted(logs.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)[keep:]:
+                old.with_suffix(".log").unlink(missing_ok=True)
+                (state_dir / old.name).unlink(missing_ok=True)
+                old.unlink(missing_ok=True)
     return code

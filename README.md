@@ -6,7 +6,7 @@ Gestor modular con GUI, CLI y menú TUI. Cada proyecto conserva recetas,
 perfiles, conectores y reglas en **.project/**; un **run.exe** local permite
 ejecutarlo sin recordar comandos largos. El Dock central mantiene el catálogo.
 
-> **0.1.0 · versión inicial experimental para Windows.**
+> **0.1.1 · versión de mantenimiento para Windows 10/11 x64.**
 > El motor se prueba también en Linux mediante CI. El empaquetado inicial es Windows.
 
 ## Conceptos
@@ -70,8 +70,35 @@ dist/ProjectDock/
 └── _internal/
 ~~~
 
-Conserva toda la carpeta. Puedes copiarla o instalarla por usuario con
-install.ps1, sin privilegios de administrador.
+Conserva toda la carpeta. La instalación remota utiliza el Setup publicado,
+sin privilegios de administrador.
+
+## Instalar con un comando
+
+En PowerShell:
+
+~~~powershell
+irm https://github.com/CctrGy/ProjectDock/releases/latest/download/install.ps1 | iex
+~~~
+
+Descarga la última versión publicada, verifica su SHA-256 e instala para el
+usuario actual en LOCALAPPDATA/Programs/ProjectDock. Añade un acceso en Inicio
+y el comando projectdock al PATH del usuario. No necesitas Python instalado.
+
+Para fijar versión o directorio:
+
+~~~powershell
+& ([scriptblock]::Create((irm https://github.com/CctrGy/ProjectDock/releases/latest/download/install.ps1))) -Version 0.1.1 -Destination 'D:\Apps\ProjectDock'
+~~~
+
+También puedes descargar el [Setup o ZIP portable](https://github.com/CctrGy/ProjectDock/releases/latest).
+El script admite -Interactive, -NoPath, -NoShortcuts y -VerifyOnly.
+Para actualizar, repite el comando. Desinstala desde Aplicaciones de Windows;
+los catálogos y las carpetas .project de tus proyectos se conservan.
+
+Los archivos se verifican contra el manifiesto publicado en la misma release.
+Esto detecta descargas alteradas; no sustituye una firma Authenticode.
+Los ejecutables de esta versión no están firmados con un certificado comercial.
 
 ## CLI
 
@@ -163,6 +190,7 @@ PROJECTDOCK_HOME y PROJECTDOCK_CATALOG permiten aislar datos y catálogo.
 - [Contribución y pruebas](CONTRIBUTING.md)
 - [Seguridad](SECURITY.md)
 - [Cambios](CHANGELOG.md)
+- [Distribución y comprobaciones de 0.1.1](docs/releases/v0.1.1.md)
 
 ## Licencia
 

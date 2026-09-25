@@ -4,10 +4,14 @@ import copy
 import re
 import shutil
 import sys
+import os
+import tempfile
+import hashlib
 from pathlib import Path
 
 from .connectors import BUILTINS
 from .storage import DockError, catalog, new_id, read_json, register, write_json
+from . import __version__, validation
 
 
 def detect(root: Path):
@@ -21,23 +25,13 @@ def detect(root: Path):
 
 
 def load(root: Path):
-    config = read_json(root / ".project/project.json")
-    if not isinstance(config, dict) or config.get("schema") != 1:
-        raise DockError("Versión de configuración no compatible")
-    for key in ["id", "instance_id", "name", "default_action", "default_profile"]:
-        if not isinstance(config.get(key), str):
-            raise DockError(f"project.json requiere un campo de texto '{key}'")
-    if not isinstance(config.get("languages"), list) or not config["languages"]:
-        raise DockError("project.json requiere una lista no vacía de lenguajes")
-    if not isinstance(config.get("tools"), dict):
-        raise DockError("project.json requiere un objeto tools")
-    return config
+    return validation.project(read_json(root / ".project/project.json"))
 
 
 def recipes(root: Path):
     result = {}
     for path in sorted((root / ".project/recipes").glob("*.json")):
-        value = read_json(path)
+        value = validation.recipe(read_json(path), path.stem)
         name = value.get("name", path.stem)
         if name in result:
             raise DockError(f"Receta duplicada: {name}")
@@ -51,17 +45,19 @@ def available_connectors(root: Path):
     for directory in [settings_path().parent / "connectors", root / ".project/connectors"]:
         if directory.is_dir():
             for path in directory.glob("*.json"):
-                result[path.stem] = read_json(path)
+                result[path.stem] = validation.connector(read_json(path))
     return result
 
 
 def save_recipe(root: Path, name: str, command: list[str], **options):
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", name) or name in {"dock", "info", "logs", "stop", "plan", "tools", "trust", "update-launcher", "tui"}:
+    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", name) or name in validation.RESERVED:
         raise DockError("Nombre de receta inválido o reservado")
     path = root / ".project/recipes" / f"{name}.json"
     if path.exists():
         raise DockError(f"La receta {name} ya existe; edítala en Dock")
-    write_json(path, {"name": name, "command": command, "cwd": "{root}", "args": [], "environment": {}, "instance": "block", "timeout": 0, **options})
+    value = {"name": name, "command": command, "cwd": "{root}", "args": [], "environment": {}, "instance": "block", "timeout": 0, **options}
+    validation.recipe(value)
+    write_json(path, value)
     if name == "start":
         config = load(root)
         if not config.get("default_action"):
@@ -100,7 +96,8 @@ def initialize(root: Path, name=None, languages=None, python=None):
     config = {"schema": 1, "id": new_id(), "instance_id": new_id(), "name": name or root.name,
         "languages": languages or detect(root), "default_action": "start", "default_profile": "development",
         "python": python or "python", "trusted": False, "portability": "system-dependent", "tools": {},
-        "logs": {"keep_runs": 100}, "version": "", "launcher_version": "0.1.0"}
+        "logs": {"keep_runs": 100}, "version": "", "launcher_version": __version__}
+    validation.project(config)
     write_json(path, config)
     write_json(root / ".project/profiles/development.json", {"environment": {}, "args": {}, "tools": {}})
     for directory in ["recipes", "scripts", "rules", "connectors", "logs", "runtime", "state"]:
@@ -140,9 +137,12 @@ def initialize(root: Path, name=None, languages=None, python=None):
     return config
 
 
-def generate_launcher(root: Path):
+def generate_launcher(root: Path, source: Path | None = None):
+    from .storage import lock
+    from .engine import process_alive
+    root = root.resolve()
     config = load(root)
-    source = Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2] / "dist/ProjectDock"
+    source = source or (Path(sys.executable).parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parents[2] / "dist/ProjectDock")
     engine, bootstrap = source / "ProjectDock.exe", source / "Launcher.exe"
     if not engine.exists() or not bootstrap.exists():
         raise DockError("Compila primero con build.ps1 o usa la distribución portable")
@@ -151,15 +151,73 @@ def generate_launcher(root: Path):
     if target.exists() and not marker.exists():
         raise DockError("Ya existe run.exe y no pertenece a ProjectDock")
     destination = root / ".project/runtime"
-    destination.mkdir(parents=True, exist_ok=True)
+    destination.parent.mkdir(parents=True, exist_ok=True)
     if engine.resolve() == (destination / "ProjectDock.exe").resolve():
         raise DockError("Actualiza el lanzador desde el Dock central")
-    shutil.copy2(engine, destination / "ProjectDock.exe")
-    shutil.copy2(bootstrap, destination / "Launcher.exe")
-    if (source / "_internal").exists():
-        shutil.copytree(source / "_internal", destination / "_internal", dirs_exist_ok=True)
-    shutil.copy2(bootstrap, target)
-    write_json(marker, {"version": "0.1.0", "engine": ".project/runtime/ProjectDock.exe"})
-    config["launcher_version"] = "0.1.0"
-    write_json(root / ".project/project.json", config)
+    with lock(root / ".project/launcher.lock"):
+        for path in (root / ".project/state").glob("*.json"):
+            state = read_json(path)
+            if state.get("status") in {"STARTING", "RUNNING"} and process_alive(state["pid"], state["created"]):
+                raise DockError("Detén las ejecuciones del proyecto antes de actualizar su lanzador")
+        if target.exists():
+            previous_hash = read_json(marker).get("sha256")
+            old_bootstrap = destination / "Launcher.exe"
+            if previous_hash is None and old_bootstrap.exists():
+                previous_hash = hashlib.sha256(old_bootstrap.read_bytes()).hexdigest()
+            if previous_hash != hashlib.sha256(target.read_bytes()).hexdigest():
+                raise DockError("run.exe ha cambiado fuera de ProjectDock; no se reemplazará")
+        staging = Path(tempfile.mkdtemp(prefix=".launcher-", dir=root / ".project"))
+        backup = staging / "previous-runtime"
+        new_runtime = staging / "runtime"
+        old_config = copy.deepcopy(config)
+        old_marker = read_json(marker) if marker.exists() else None
+        swapped = False
+        committed = False
+        try:
+            new_runtime.mkdir()
+            shutil.copy2(engine, new_runtime / "ProjectDock.exe")
+            shutil.copy2(bootstrap, new_runtime / "Launcher.exe")
+            if (source / "_internal").exists():
+                shutil.copytree(source / "_internal", new_runtime / "_internal")
+            new_run = staging / "run.exe"
+            shutil.copy2(bootstrap, new_run)
+            if target.exists():
+                shutil.copy2(target, staging / "previous-run.exe")
+            if destination.exists():
+                destination.rename(backup)
+            try:
+                new_runtime.rename(destination)
+            except OSError:
+                if backup.exists():
+                    backup.rename(destination)
+                raise
+            swapped = True
+            os.replace(new_run, target)
+            config["launcher_version"] = __version__
+            write_json(root / ".project/project.json", config)
+            write_json(marker, {"version": __version__, "engine": ".project/runtime/ProjectDock.exe",
+                                "sha256": hashlib.sha256(target.read_bytes()).hexdigest()})
+            committed = True
+        except Exception:
+            if swapped:
+                # Solo revierte directorios creados por esta operación.
+                destination.rename(staging / "failed-runtime")
+                if backup.exists():
+                    backup.rename(destination)
+                old_run = staging / "previous-run.exe"
+                if old_run.exists():
+                    os.replace(old_run, target)
+                else:
+                    target.unlink(missing_ok=True)
+                write_json(root / ".project/project.json", old_config)
+                if old_marker is None:
+                    marker.unlink(missing_ok=True)
+                else:
+                    write_json(marker, old_marker)
+            raise
+        finally:
+            # Una copia anterior no restaurada se conserva para recuperación manual.
+            if not backup.exists() or committed:
+                if staging.resolve().is_relative_to((root / ".project").resolve()):
+                    shutil.rmtree(staging)
     return target

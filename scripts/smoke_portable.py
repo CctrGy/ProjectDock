@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from projectdock import __version__
 
 
 def main():
@@ -16,18 +17,18 @@ def main():
         environment = dict(os.environ, PROJECTDOCK_HOME=str(base / "settings"), PROJECTDOCK_CATALOG=str(base / "projects.db"))
         environment.pop("PYTHONPATH", None)
         def call(executable, *args, code=0):
-            result = subprocess.run([str(executable), *args], cwd=base, env=environment, text=True, capture_output=True, timeout=40)
+            result = subprocess.run([str(executable), *args], cwd=base, env=environment, text=True, encoding="utf-8", capture_output=True, timeout=40)
             assert result.returncode == code, (args, result.stdout, result.stderr)
             return result.stdout
-        assert call(engine, "--version").strip() == "0.1.0"
+        assert call(engine, "--version").strip() == __version__
         call(engine, "register", str(root), "--name", "Portable")
         # El programa de prueba es otro ejecutable empaquetado, no Python externo.
         call(engine, "add-action", "Portable", "start", "--", str(engine), "--version")
         call(engine, "launcher", "Portable")
         launcher = root / "run.exe"
         call(engine, "trust", "Portable")
-        assert call(launcher).strip() == "0.1.0"
-        assert call(engine, "start", "Portable").strip() == "0.1.0"
+        assert call(launcher).strip() == __version__
+        assert call(engine, "start", "Portable").strip() == __version__
         # Lua debe funcionar también dentro del runtime copiado.
         rule = root / ".project/rules/test.lua"
         rule.write_text('return {"--version"}', encoding="utf-8")
@@ -37,7 +38,7 @@ def main():
         value["lua"] = "rules/test.lua"
         recipe.write_text(json.dumps(value), encoding="utf-8")
         call(engine, "trust", "Portable")
-        assert call(launcher).strip() == "0.1.0"
+        assert call(launcher).strip() == __version__
         assert "EXITED" in call(launcher, "logs")
         print("Portable + launcher + Lua: OK")
 

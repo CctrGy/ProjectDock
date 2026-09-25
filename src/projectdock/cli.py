@@ -87,11 +87,18 @@ def local(root: Path, arguments):
 
 
 def main(argv=None):
+    for stream in [sys.stdout, sys.stderr]:
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="replace")
     args = list(sys.argv[1:] if argv is None else argv)
     try:
         if args == ["--lua-worker"]:
-            lua_worker()
-            return 0
+            try:
+                lua_worker()
+                return 0
+            except Exception as exc:
+                print(f"Regla Lua inválida: {exc}", file=sys.stderr)
+                return 1
         if args and args[0] == "--project":
             if len(args) < 2:
                 raise DockError("Falta la ruta del proyecto")
@@ -164,7 +171,7 @@ Git, Lua y otras herramientas solo se ejecutan tras autorizar el proyecto.""")
         if command == "start":
             return delegate(root, args)
         return delegate(root, [command, *args])
-    except (DockError, OSError, ValueError, KeyError) as exc:
+    except (DockError, OSError, ValueError, KeyError, TypeError) as exc:
         print(f"ProjectDock: {exc}", file=sys.stderr)
         return 1
 

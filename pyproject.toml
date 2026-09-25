@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "projectdock"
-version = "0.1.0"
+version = "0.1.1"
 description = "Dock modular para proyectos, recetas y lanzadores"
 requires-python = ">=3.10"
 dependencies = ["lupa>=2.2,<3", "psutil>=6,<8"]

@@ -18,7 +18,9 @@ def read_json(path: Path, default=None):
     if not path.exists() and default is not None:
         return default
     try:
-        return json.loads(path.read_text(encoding="utf-8-sig"))
+        def invalid_constant(value):
+            raise ValueError(f"Valor JSON no finito: {value}")
+        return json.loads(path.read_text(encoding="utf-8-sig"), parse_constant=invalid_constant)
     except (OSError, ValueError) as exc:
         raise DockError(f"No se puede leer {path}: {exc}") from exc
 
@@ -28,7 +30,7 @@ def write_json(path: Path, value):
     descriptor, temporary = tempfile.mkstemp(prefix=".dock-", dir=path.parent)
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
-            stream.write(json.dumps(value, ensure_ascii=False, indent=2) + "\n")
+            stream.write(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temporary, path)
@@ -91,14 +93,23 @@ def catalog_path() -> Path:
     if override:
         return Path(override).expanduser().resolve()
     settings = read_json(settings_path(), {})
+    if not isinstance(settings, dict):
+        raise DockError("settings.json debe contener un objeto")
     return Path(settings.get("catalog", str(documents() / "ProjectDock/projects.db")))
 
 
 def catalog():
     value = read_json(catalog_path(), {"schema": 1, "projects": []})
-    if value.get("schema") != 1 or not isinstance(value.get("projects"), list):
-        raise DockError("Formato de catálogo no compatible")
+    validate_catalog(value)
     return value
+
+
+def validate_catalog(value):
+    if not isinstance(value, dict) or value.get("schema") != 1 or not isinstance(value.get("projects"), list):
+        raise DockError("Formato de catálogo no compatible")
+    for row in value["projects"]:
+        if not isinstance(row, dict) or any(not isinstance(row.get(key), str) or not row[key] for key in ["name", "path", "project_id", "instance_id"]):
+            raise DockError("Entrada de catálogo incompleta o inválida")
 
 
 def register(root: Path, config: dict):
@@ -106,6 +117,8 @@ def register(root: Path, config: dict):
     with lock(path.with_suffix(".lock")):
         db = catalog()
         row = next((r for r in db["projects"] if Path(r["path"]).resolve() == root.resolve()), None)
+        if not row:
+            row = next((r for r in db["projects"] if r["instance_id"] == config["instance_id"] and not Path(r["path"]).exists()), None)
         values = {"name": config["name"], "path": str(root.resolve()), "project_id": config["id"], "instance_id": config["instance_id"]}
         if row:
             row.update(values)
@@ -129,14 +142,15 @@ def resolve_project(value: str) -> Path:
 
 def change_catalog(destination: Path, copy_current=False):
     destination = destination.expanduser().resolve()
+    if os.environ.get("PROJECTDOCK_CATALOG") and destination != catalog_path().resolve():
+        raise DockError("PROJECTDOCK_CATALOG fija el catálogo; elimina esa variable antes de cambiarlo")
     if copy_current and destination != catalog_path().resolve():
         if destination.exists():
             raise DockError("El destino ya existe; ábrelo para conservar su contenido")
         write_json(destination, catalog())
     elif destination.exists():
         value = read_json(destination)
-        if value.get("schema") != 1 or not isinstance(value.get("projects"), list):
-            raise DockError("El archivo seleccionado no es un catálogo válido")
+        validate_catalog(value)
     else:
         write_json(destination, {"schema": 1, "projects": []})
     settings = read_json(settings_path(), {})

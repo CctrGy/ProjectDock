@@ -20,8 +20,8 @@
 - Exportar/importar plantillas con revisión de datos personales.
 - Instalación y actualización verificadas de herramientas con versiones fijadas.
 - Detección detallada de distribuciones y versiones.
-- Actualización transaccional del runtime y rollback.
-- Reasociación asistida de proyectos movidos o desconectados.
+- Migración entre versiones mayores del runtime (0.1.1 ya recupera actualizaciones fallidas).
+- Asistente de recuperación para unidades desconectadas; 0.1.1 reconoce traslados al registrar.
 - Formularios para todas las opciones; el editor JSON cubre las avanzadas.
 - PTY, TUI a pantalla completa y empaquetado Linux/macOS.
 - Proveedor concreto de Archify.

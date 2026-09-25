@@ -1,14 +1,15 @@
 [CmdletBinding()]
-param()
+param([switch]$Release)
 $ErrorActionPreference = 'Stop'
 Push-Location $PSScriptRoot
 try {
-    if (-not (Test-Path '.build-env\Scripts\python.exe')) {
-        python -m venv --system-site-packages .build-env
+    $environmentName = if ($Release) { '.release-env' } else { '.build-env' }
+    $buildPython = Join-Path $PSScriptRoot "$environmentName\Scripts\python.exe"
+    if (-not (Test-Path $buildPython)) {
+        python -m venv $environmentName
         if ($LASTEXITCODE -ne 0) { throw 'No se pudo crear el entorno de compilación' }
     }
-    $buildPython = Join-Path $PSScriptRoot '.build-env\Scripts\python.exe'
-    & $buildPython -m pip install -e . 'pyinstaller>=6,<7' pytest
+    & $buildPython -m pip install -e . -r requirements-build.txt
     if ($LASTEXITCODE -ne 0) { throw 'No se pudieron preparar las dependencias' }
     & $buildPython -m pytest -q
     if ($LASTEXITCODE -ne 0) { throw 'Las pruebas han fallado' }

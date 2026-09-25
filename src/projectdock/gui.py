@@ -12,6 +12,7 @@ from tkinter import filedialog, messagebox, simpledialog, ttk
 from .engine import grant_trust, plan, public_plan, run, stop
 from .project import available_connectors, detect, enable_tool, generate_launcher, initialize, load, recipes, save_recipe
 from .storage import DockError, catalog, catalog_path, change_catalog, read_json, register, write_json
+from . import __version__, validation
 
 BG, PANEL, TEXT, MUTED, ACCENT = "#101820", "#182630", "#edf5fa", "#a5b8c7", "#68dfbb"
 
@@ -20,7 +21,7 @@ class DockWindow:
     def __init__(self, window, project=None):
         self.window = window
         self.root = project
-        self.events = queue.Queue()
+        self.events = queue.Queue(maxsize=256)
         self.cancel = threading.Event()
         self.worker = None
         self.editor_path = None
@@ -117,7 +118,7 @@ class DockWindow:
         ttk.Button(row, text="Limpiar vista", command=lambda: self.console.delete("1.0", "end")).pack(side="left", padx=8)
         self.console = tk.Text(logs_tab, height=16, bg="#0a1118", fg=ACCENT, insertbackground=TEXT, wrap="word", font=("Consolas", 10), relief="flat")
         self.console.pack(fill="both", expand=True, pady=10)
-        self.status = tk.StringVar(value="Listo · ProjectDock 0.1.0")
+        self.status = tk.StringVar(value=f"Listo · ProjectDock {__version__}")
         ttk.Label(window, textvariable=self.status, style="Muted.TLabel", padding=(22, 12)).pack(fill="x")
         window.protocol("WM_DELETE_WINDOW", self.close)
         self.refresh()
@@ -207,7 +208,7 @@ class DockWindow:
 
     def poll(self):
         try:
-            while True:
+            for _ in range(100):
                 kind, value = self.events.get_nowait()
                 self.console.insert("end", value + "\n")
                 self.console.see("end")
@@ -215,6 +216,8 @@ class DockWindow:
                     self.status.set(value)
         except queue.Empty:
             pass
+        if int(self.console.index("end-1c").split(".")[0]) > 3000:
+            self.console.delete("1.0", "1000.0")
         self.window.after(100, self.poll)
 
     def halt(self):
@@ -254,11 +257,23 @@ class DockWindow:
                 value = json.loads(text)
                 if not isinstance(value, dict):
                     raise DockError("El archivo debe contener un objeto JSON")
+                if self.editor_path.name == "project.json":
+                    validation.project(value)
+                elif self.editor_path.parent.name == "recipes":
+                    validation.recipe(value, self.editor_path.stem)
+                elif self.editor_path.parent.name == "profiles":
+                    validation.profile(value)
+                elif self.editor_path.parent.name == "connectors":
+                    validation.connector(value)
                 write_json(self.editor_path, value)
             else:
                 self.editor_path.write_text(text, encoding="utf-8")
             register(self.root, load(self.root))
             self.refresh()
+            selected_file = self.files.get()
+            self.display()
+            self.files.set(selected_file)
+            self.open_editor()
             self.status.set("Guardado. Revisa y vuelve a autorizar antes de ejecutar.")
         self.guarded(save)
 
@@ -271,12 +286,15 @@ class DockWindow:
         def create():
             base = (self.root / ".project").resolve()
             path = (base / name).resolve()
-            if not path.is_relative_to(base) or path.parts[len(base.parts)] not in {"profiles", "rules", "scripts", "connectors"}:
+            if path == base or not path.is_relative_to(base) or path.parts[len(base.parts)] not in {"profiles", "rules", "scripts", "connectors"}:
                 raise DockError("Usa profiles/, rules/, scripts/ o connectors/ dentro de .project")
             if path.exists():
                 raise DockError("Ese archivo ya existe")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text("{}\n" if path.suffix == ".json" else "-- return context.args\n" if path.suffix == ".lua" else "", encoding="utf-8")
+            if path.suffix == ".json":
+                write_json(path, {"languages": ["*"], "executable": "", "recipes": {}} if path.parent.name == "connectors" else {})
+            else:
+                path.write_text("return context.args\n" if path.suffix == ".lua" else "", encoding="utf-8")
             self.display()
             self.files.set(str(path.relative_to(base)))
             self.open_editor()
@@ -345,7 +363,11 @@ class DockWindow:
         if not folder:
             return
         root = Path(folder)
-        existing = load(root) if (root / ".project/project.json").exists() else {}
+        try:
+            existing = load(root) if (root / ".project/project.json").exists() else {}
+        except DockError as exc:
+            messagebox.showerror("ProjectDock", str(exc), parent=self.window)
+            return
         default_recipe = recipes(root).get(existing.get("default_action", ""), {}) if existing else {}
         dialog = tk.Toplevel(self.window)
         dialog.title("Incorporar proyecto · ProjectDock")
@@ -386,10 +408,13 @@ class DockWindow:
                     raise DockError("Los argumentos deben ser una lista de textos")
                 config = initialize(root, fields["name"].get(), [x.strip() for x in fields["languages"].get().split(",") if x.strip()], fields["python"].get())
                 config.update(name=fields["name"].get(), languages=[x.strip() for x in fields["languages"].get().split(",") if x.strip()], python=fields["python"].get())
+                validation.project(config)
                 write_json(root / ".project/project.json", config)
                 for name, variable in selected.items():
                     if variable.get():
                         enable_tool(root, name)
+                    elif existing.get("tools", {}).get(name, {}).get("enabled"):
+                        enable_tool(root, name, False)
                 default = config.get("default_action")
                 recipe_path = root / ".project/recipes" / f"{default}.json"
                 if default and recipe_path.exists():
