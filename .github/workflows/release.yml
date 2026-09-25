@@ -10,6 +10,7 @@ permissions:
 jobs:
   tests:
     strategy:
+      fail-fast: false
       matrix:
         os: [windows-latest, ubuntu-latest]
         python: ['3.10', '3.12']

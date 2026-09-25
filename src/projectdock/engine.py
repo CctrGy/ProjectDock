@@ -460,7 +460,7 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
                     emit(clean_chunk("", final=True))
                 else:
                     emit(clean_chunk(line))
-            if done:
+            if done and "reason" not in record:
                 code = process.wait()
     except KeyboardInterrupt:
         code = 130
