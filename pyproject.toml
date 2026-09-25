@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "projectdock"
+version = "0.1.0"
+description = "Dock modular para proyectos, recetas y lanzadores"
+requires-python = ">=3.10"
+dependencies = ["lupa>=2.2,<3", "psutil>=6,<8"]
+
+[project.scripts]
+projectdock = "projectdock.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

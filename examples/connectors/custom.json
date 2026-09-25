@@ -1,0 +1,7 @@
+{
+  "executable": "my-tool.exe",
+  "languages": ["*"],
+  "recipes": {
+    "custom-check": ["{tool:custom}", "check", "{root}"]
+  }
+}

@@ -1,0 +1,6 @@
+{
+  "environment": {"APP_MODE": "demo"},
+  "args": {},
+  "options": {"serve": {"port": 8080}},
+  "tools": {"git": {"enabled": false}}
+}

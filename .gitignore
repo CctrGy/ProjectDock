@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.build-env/
+.venv/
+/*.spec
+build/
+dist/
+work/
+*.egg-info/
+/.project/
+/run.exe
