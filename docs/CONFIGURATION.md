@@ -169,3 +169,54 @@ logs.max_bytes_per_run permiten configurarlo.
 STARTING/RUNNING indican ejecución, no salud funcional.
 La GUI detiene sus acciones al cerrarse. La CLI espera y devuelve su código.
 --debug-terminal abre otra consola Windows. El supervisor permanente está pendiente.
+
+## Consola e intérprete (cambios sin publicar)
+
+Una receta admite "io": "captured" (por defecto) o "io": "inherit".
+inherit conserva stdin/stdout/stderr de la terminal: admite TUI, prompts y
+secuencias ANSI, y no registra el contenido de la sesión. El campo antiguo
+"interactive": true equivale a inherit si no se especifica io. Desde la GUI,
+estas recetas abren una consola externa en Windows; en otros sistemas hay que
+ejecutarlas desde una terminal. --debug-terminal fuerza consola heredada en
+la nueva ventana y espera su código de salida. Los argumentos tras -- llegan
+a la aplicación, incluso si se llaman --debug-terminal.
+
+Ctrl+C en la consola da hasta tres segundos al hijo para terminar antes de
+limpiar el árbol. stop, timeout y cierre de GUI todavía pueden forzar el
+cierre: guarda los datos de la TUI antes de usarlos. No es un supervisor de
+servicios persistentes. La asignación del Job Object Windows ocurre después
+de crear el proceso y conserva una ventana de carrera; no es una barrera de
+seguridad para código hostil. captured no emula una terminal y su lectura
+por líneas puede retrasar prompts sin salto de línea.
+
+python explícito prevalece siempre y admite {root}. Cuando vale "python",
+se busca .venv, después .venv311 y finalmente Python en PATH. Crear un entorno
+en .project/python no lo selecciona. Para usarlo, configura python como
+"{root}/.project/python/Scripts/python.exe" (Windows) o
+"{root}/.project/python/bin/python" (POSIX), revisa las recetas y vuelve a
+autorizar con trust. environment-install-dev se propone al detectar un
+extra dev; no se instala automáticamente.
+
+Las recetas pueden declarar "resources": ["build", "python-environment"].
+Dos acciones del mismo proyecto que comparten un recurso no se ejecutan a
+la vez, aunque tengan nombres diferentes. Todos los participantes deben
+declararlo; no bloquea herramientas ejecutadas fuera de ProjectDock.
+
+## Preparar una migración
+
+projectdock migration-preview RUTA lee la carpeta sin crear .project, sin
+registrarla y sin borrar wrappers. Devuelve hashes, sugerencias de .gitignore
+y comprobaciones pendientes. Añade /.project/ y /run.exe al .gitignore del
+proyecto cuando decidas adoptarlo; el informe no cambia este archivo.
+
+Los proyectos ya registrados conservan sus recetas al actualizar run.exe.
+Hay que revisar manualmente io, resources y el intérprete en esas recetas.
+Las nuevas recetas LANCTL usan consola heredada. build conserva la
+verificación de árbol limpio del script original; build-development permite
+-AllowDirty explícitamente. El script especializado sigue seleccionando su
+propio intérprete y su versión: comprueba sus parámetros antes de publicar.
+
+trust incluye definiciones locales y conectores compartidos. No fija hashes
+de ejecutables externos, fuentes del proyecto ni contenido resuelto por PATH,
+ni impide modificaciones concurrentes entre validación y ejecución. Usa
+rutas explícitas y código de confianza. No es un sandbox.

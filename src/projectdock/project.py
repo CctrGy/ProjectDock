@@ -105,9 +105,11 @@ def initialize(root: Path, name=None, languages=None, python=None):
     if (root / "lanctl.py").exists():
         for app in ["lanctl", "lanip", "lanwire", "lanrack", "lanaccess", "lanmon"]:
             if (root / f"{app}.py").exists():
-                save_recipe(root, "start" if app == "lanctl" else app, ["{python}", f"{{root}}/{app}.py"])
+                save_recipe(root, "start" if app == "lanctl" else app, ["{python}", f"{{root}}/{app}.py"], io="inherit")
         if (root / "scripts/build-windows.ps1").exists():
-            save_recipe(root, "build", ["powershell.exe", "-NoProfile", "-File", "{root}/scripts/build-windows.ps1", "-AllowDirty"])
+            build = ["powershell.exe", "-NoProfile", "-File", "{root}/scripts/build-windows.ps1"]
+            save_recipe(root, "build", build, resources=["build"])
+            save_recipe(root, "build-development", [*build, "-AllowDirty"], resources=["build"])
     elif (root / "main.py").exists():
         save_recipe(root, "start", ["{python}", "{root}/main.py"])
     elif (root / "package.json").exists():
@@ -123,7 +125,7 @@ def initialize(root: Path, name=None, languages=None, python=None):
         config["default_action"] = ""
     write_json(path, config)
     if "python" in config["languages"]:
-        save_recipe(root, "environment-create", [config["python"], "-m", "venv", "{root}/.project/python"])
+        save_recipe(root, "environment-create", [config["python"], "-m", "venv", "{root}/.project/python"], resources=["python-environment"])
         install = ["{python}", "-m", "pip", "install"]
         if (root / "pyproject.toml").exists():
             install += ["-e", "{root}"]
@@ -132,7 +134,13 @@ def initialize(root: Path, name=None, languages=None, python=None):
         else:
             install = []
         if install:
-            save_recipe(root, "environment-install", install)
+            save_recipe(root, "environment-install", install, resources=["python-environment"])
+        metadata = root / "pyproject.toml"
+        if metadata.exists():
+            text = metadata.read_text(encoding="utf-8")
+            section = re.search(r"(?ms)^\[project\.optional-dependencies\]\s*(.*?)(?=^\[|\Z)", text)
+            if section and re.search(r"(?m)^dev\s*=", section.group(1)):
+                save_recipe(root, "environment-install-dev", ["{python}", "-m", "pip", "install", "-e", "{root}[dev]"], resources=["python-environment"])
     register(root, config)
     return config
 

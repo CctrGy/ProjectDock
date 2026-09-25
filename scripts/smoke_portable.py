@@ -40,7 +40,25 @@ def main():
         call(engine, "trust", "Portable")
         assert call(launcher).strip() == __version__
         assert "EXITED" in call(launcher, "logs")
-        print("Portable + launcher + Lua: OK")
+        # Comprobar argumentos y una consola real, también a través de run.exe.
+        probe = root / "terminal_probe.py"
+        probe.write_text(
+            "import json,sys\nfrom pathlib import Path\n"
+            "Path('terminal-result.json').write_text(json.dumps({"
+            "'tty':[sys.stdin.isatty(),sys.stdout.isatty(),sys.stderr.isatty()],"
+            "'args':sys.argv[1:]}),encoding='utf-8')\n"
+            "print('\\x1b[32mconsole probe\\x1b[0m')\n"
+            "raise SystemExit(7)\n", encoding="utf-8")
+        call(engine, "add-action", "Portable", "terminal-check", "--", sys.executable, str(probe))
+        call(engine, "launcher", "Portable")
+        assert rule.read_text(encoding="utf-8") == 'return {"--version"}'
+        call(engine, "trust", "Portable")
+        tricky = ["two words", 'a"quote', "áé中", "&|<>^%", "--debug-terminal"]
+        call(launcher, "terminal-check", "--debug-terminal", "--", *tricky, code=7)
+        result = json.loads((root / "terminal-result.json").read_text(encoding="utf-8"))
+        assert result["tty"] == [True, True, True], result
+        assert result["args"] == tricky, result
+        print("Portable + launcher + Lua + real console + argument fidelity: OK")
 
 
 if __name__ == "__main__":

@@ -27,6 +27,10 @@ def trust_digest(root: Path):
             if path.is_file():
                 digest.update(str(path.relative_to(root)).encode())
                 digest.update(path.read_bytes())
+    shared = settings_path().parent / "connectors"
+    for path in sorted(shared.glob("*.json")):
+        digest.update(("shared/" + path.name).encode())
+        digest.update(path.read_bytes())
     config = load(root)
     config.pop("trusted", None)
     digest.update(json.dumps(config, sort_keys=True).encode())
@@ -49,11 +53,14 @@ def require_trust(root: Path):
 
 
 def project_python(root: Path, config: dict):
-    for folder in [root / ".project/python", root / ".venv"]:
+    configured = config.get("python", "python")
+    if configured != "python":
+        return configured.replace("{root}", str(root))
+    for folder in [root / ".venv", root / ".venv311"]:
         candidate = folder / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
         if candidate.is_file():
             return str(candidate)
-    return config.get("python", "python")
+    return configured
 
 
 def expand(value: str, root: Path, config: dict, environment: dict, profile: dict, secret_values: list[str]):
@@ -318,7 +325,35 @@ def preflight(root, action=None, profile=None, chain=()):
     # Las hojas se resuelven al ejecutarlas: un paso anterior puede crear su entorno.
 
 
-def run(root: Path, action=None, profile=None, extra=None, replace_args=False, output=print, cancel=None, chain=()):
+def external_terminal(root, action=None, profile=None, extra=None, replace_args=False, cancel=None):
+    """Abre un supervisor en consola real y conserva su resultado."""
+    if os.name != "nt":
+        raise DockError("Ejecuta esta receta desde una terminal; la consola externa requiere Windows")
+    command = [sys.executable]
+    if not getattr(sys, "frozen", False):
+        command += ["-m", "projectdock"]
+    command += ["--project", str(root)]
+    if action:
+        command.append(action)
+    if profile:
+        command += ["--profile", profile]
+    if replace_args:
+        command.append("--replace-args")
+    command += ["--", *(extra or [])]
+    environment = dict(os.environ, PROJECTDOCK_TERMINAL_MODE="inherit")
+    child = subprocess.Popen(command, env=environment, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    while child.poll() is None:
+        if cancel and cancel.is_set():
+            # Limitar la solicitud al supervisor de esta ventana.
+            for path in (root / ".project/state").glob("*.json"):
+                record = read_json(path)
+                if record.get("pid") == child.pid and record.get("status") in {"STARTING", "RUNNING"}:
+                    write_json(path.with_suffix(".stop"), {"stop": True})
+        time.sleep(0.1)
+    return child.returncode
+
+
+def run(root: Path, action=None, profile=None, extra=None, replace_args=False, output=print, cancel=None, chain=(), terminal=True):
     import psutil
     require_trust(root)
     if cancel and cancel.is_set():
@@ -335,7 +370,7 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
             from concurrent.futures import ThreadPoolExecutor, as_completed
             group_cancel = cancel or threading.Event()
             with ThreadPoolExecutor(max_workers=max(1, min(len(steps), 16))) as pool:
-                futures = [pool.submit(run, root, step, resolved["profile"], output=output, cancel=group_cancel, chain=(*chain, action)) for step in steps]
+                futures = [pool.submit(run, root, step, resolved["profile"], output=output, cancel=group_cancel, chain=(*chain, action), terminal=terminal) for step in steps]
                 codes = []
                 try:
                     for future in as_completed(futures):
@@ -348,17 +383,24 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
                     raise
             return next((code for code in codes if code), 0)
         for step in steps:
-            code = run(root, step, resolved["profile"], output=output, cancel=cancel, chain=(*chain, action))
+            code = run(root, step, resolved["profile"], output=output, cancel=cancel, chain=(*chain, action), terminal=terminal)
             if code:
                 return code
         return 0
     recipe = resolved["recipe"]
+    if not terminal and recipe.get("io", "inherit" if recipe.get("interactive") else "captured") == "inherit":
+        return external_terminal(root, action, profile, extra, replace_args, cancel)
     run_id = new_id()
     state_dir = root / ".project/state"
     state_dir.mkdir(parents=True, exist_ok=True)
     state_file = state_dir / f"{run_id}.json"
-    record = {"id": run_id, "action": action, "profile": resolved["profile"], "status": "STARTING", "pid": os.getpid(), "created": psutil.Process().create_time(), "started": datetime.now(timezone.utc).isoformat()}
+    record = {"id": run_id, "action": action, "resources": recipe.get("resources", []), "profile": resolved["profile"], "status": "STARTING", "pid": os.getpid(), "created": psutil.Process().create_time(), "started": datetime.now(timezone.utc).isoformat()}
     with lock(state_dir / "actions.lock"):
+        for path in state_dir.glob("*.json"):
+            previous = read_json(path)
+            conflict = set(record["resources"]).intersection(previous.get("resources", []))
+            if conflict and previous.get("status") in {"STARTING", "RUNNING"} and process_alive(previous["pid"], previous["created"]):
+                raise DockError("Recurso ocupado: " + ", ".join(sorted(conflict)))
         if recipe.get("instance", "block") != "allow":
             for path in state_dir.glob("*.json"):
                 previous = read_json(path)
@@ -399,10 +441,16 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
         if os.name == "nt" and invocation[1:4] == ["/d", "/s", "/c"]:
             # cmd no usa las reglas de escape del runtime C de list2cmdline.
             invocation = subprocess.list2cmdline(invocation[:4]) + ' "' + invocation[4] + '"'
-        process = subprocess.Popen(invocation, cwd=resolved["cwd"], env=resolved["environment"], stdin=None if recipe.get("interactive") else subprocess.DEVNULL,
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace",
-            creationflags=0x08000000 if os.name == "nt" else 0, start_new_session=os.name != "nt")
+        inherited = recipe.get("io", "inherit" if recipe.get("interactive") else "captured") == "inherit"
+        inherited = inherited or os.environ.get("PROJECTDOCK_TERMINAL_MODE") == "inherit"
+        process = subprocess.Popen(invocation, cwd=resolved["cwd"], env=resolved["environment"],
+            stdin=None if inherited else subprocess.DEVNULL,
+            stdout=None if inherited else subprocess.PIPE, stderr=None if inherited else subprocess.STDOUT,
+            text=True, encoding="utf-8", errors="replace",
+            creationflags=0x08000000 if os.name == "nt" and not inherited else 0,
+            start_new_session=os.name != "nt" and not inherited)
         tree = ProcessTree(process)
+        tree.owns_group = not inherited
         record.update(status="RUNNING", child_pid=process.pid)
         write_json(state_file, record)
         messages = queue.Queue(maxsize=128)
@@ -424,9 +472,10 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
                 pass
             finally:
                 send(None)
-        reader = threading.Thread(target=read_output, daemon=True)
-        reader.start()
-        done = False
+        if not inherited:
+            reader = threading.Thread(target=read_output, daemon=True)
+            reader.start()
+        done = inherited
         with (logs / f"{run_id}.log").open("wb") as stream:
             def emit(line):
                 nonlocal written
@@ -465,7 +514,12 @@ def run(root: Path, action=None, profile=None, extra=None, replace_args=False, o
     except KeyboardInterrupt:
         code = 130
         if process:
-            tree.terminate() if tree else terminate_tree(process.pid)
+            # En consola heredada Ctrl+C también llega al hijo; darle margen
+            # para restaurar la pantalla/guardar antes de la limpieza forzada.
+            try:
+                process.wait(timeout=3)
+            except (subprocess.TimeoutExpired, KeyboardInterrupt):
+                tree.terminate() if tree else terminate_tree(process.pid)
     except Exception as exc:
         if process:
             tree.terminate() if tree else terminate_tree(process.pid)

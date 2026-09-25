@@ -198,7 +198,7 @@ class DockWindow:
             self.status.set("Ejecutando…")
             def worker():
                 try:
-                    code = run(root, action, profile, output=lambda line: self.events.put(("line", line)), cancel=self.cancel)
+                    code = run(root, action, profile, output=lambda line: self.events.put(("line", line)), cancel=self.cancel, terminal=False)
                     self.events.put(("done", f"Finalizado · código {code}"))
                 except Exception as exc:
                     self.events.put(("done", f"Error: {exc}"))

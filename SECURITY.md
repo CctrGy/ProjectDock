@@ -5,7 +5,9 @@ local vinculada a la ruta y a la configuración. Tras autorizar, los comandos
 tienen los permisos del usuario: no se ejecutan en una sandbox.
 
 La huella cubre recetas, perfiles, reglas, conectores, scripts de .project y
-project.json; no pretende aprobar cada cambio del código fuente externo.
+project.json, además de los conectores compartidos; no pretende aprobar cada
+cambio del código fuente externo. No fija ejecutables externos ni PATH, ni
+evita cambios concurrentes entre la validación y la ejecución.
 Lua usa otro proceso con memoria, tiempo y bibliotecas limitados.
 
 No guardes secretos literales. La ocultación de valores referenciados en logs

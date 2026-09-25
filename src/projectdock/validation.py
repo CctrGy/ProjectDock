@@ -83,6 +83,13 @@ def recipe(value, fallback=""):
     else:
         strings(value.get("command"), "command", nonempty=True)
     strings(value.get("args", []), "args")
+    if value.get("io", "captured") not in {"captured", "inherit"}:
+        raise DockError("io debe ser captured o inherit")
+    if "interactive" in value and type(value["interactive"]) is not bool:
+        raise DockError("interactive debe ser booleano")
+    strings(value.get("resources", []), "resources")
+    for resource in value.get("resources", []):
+        name(resource, "Recurso")
     environment(value.get("environment", {}))
     if value.get("instance", "block") not in {"block", "allow"}:
         raise DockError("instance debe ser block o allow")

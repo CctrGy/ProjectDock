@@ -1,5 +1,16 @@
 # Historial
 
+## Sin publicar — compatibilidad de lanzadores
+
+- Consola heredada para TUI y consola externa desde GUI en Windows.
+- --debug-terminal conserva argumentos de la aplicación y código de salida.
+- Python explícito prevalece; crear un entorno no lo selecciona silenciosamente.
+- Recetas LANCTL interactivas, build estricto y build-development separado.
+- Instalación opcional del extra dev y exclusión por recursos entre recetas.
+- Informe migration-preview sin cambios en el proyecto inspeccionado.
+- La autorización incluye cambios en conectores compartidos.
+- Verificación del lanzador compilado en consola real y argumentos complejos.
+
 ## 0.1.1 — 2026-09-25
 
 - Timeout y cancelación activos aunque el programa cierre su salida.

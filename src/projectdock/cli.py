@@ -77,12 +77,13 @@ def local(root: Path, arguments):
         print_json(public_plan(plan(root, parsed.action, parsed.profile, extra, parsed.replace_args, parsed.rules)))
         return 0
     if parsed.debug_terminal:
-        args = [x for x in arguments if x != "--debug-terminal"]
+        boundary = arguments.index("--") if "--" in arguments else len(arguments)
+        args = [x for x in arguments[:boundary] if x != "--debug-terminal"] + arguments[boundary:]
         command = [sys.executable, "--project", str(root), *args] if getattr(sys, "frozen", False) else [sys.executable, "-m", "projectdock", "--project", str(root), *args]
         if os.name != "nt":
             raise DockError("La terminal de depuración separada está disponible en Windows")
-        subprocess.Popen(command, creationflags=subprocess.CREATE_NEW_CONSOLE)
-        return 0
+        environment = dict(os.environ, PROJECTDOCK_TERMINAL_MODE="inherit")
+        return subprocess.call(command, env=environment, creationflags=subprocess.CREATE_NEW_CONSOLE)
     return run(root, parsed.action, parsed.profile, extra, parsed.replace_args)
 
 
@@ -118,6 +119,7 @@ projectdock                         Abre la GUI
 projectdock tui [PROYECTO]           Abre el menú de terminal
 projectdock register RUTA [--name N] [--language L] [--python RUTA]
 projectdock list                     Catálogo JSON
+projectdock migration-preview RUTA   Informe de migración sin cambios
 projectdock catalog [RUTA] [--copy]   Abrir catálogo o copiar el actual
 projectdock launcher PROYECTO        Generar/actualizar run.exe
 projectdock add-action PROYECTO NOMBRE -- EJECUTABLE ARGUMENTOS
@@ -134,6 +136,12 @@ Git, Lua y otras herramientas solo se ejecutan tras autorizar el proyecto.""")
             return 0
         if command == "list":
             print_json(catalog())
+            return 0
+        if command == "migration-preview":
+            from .migration import preview
+            if len(args) != 1:
+                raise DockError("Uso: projectdock migration-preview RUTA")
+            print_json(preview(args[0]))
             return 0
         if command == "catalog":
             if args:

@@ -8,6 +8,7 @@ class ProcessTree:
     def __init__(self, process):
         self.process = process
         self.handle = None
+        self.owns_group = True
         if os.name == "nt":
             from ctypes import wintypes as w
             class Basic(ctypes.Structure):
@@ -41,7 +42,7 @@ class ProcessTree:
     def terminate(self):
         if self.handle:
             self.kernel.TerminateJobObject(self.handle, 130)
-        elif os.name != "nt":
+        elif os.name != "nt" and self.owns_group:
             try:
                 os.killpg(self.process.pid, signal.SIGKILL)
             except ProcessLookupError:
