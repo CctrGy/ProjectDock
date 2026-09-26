@@ -15,6 +15,9 @@ projectdock = "projectdock.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+projectdock = ["assets/*.png", "assets/*.ico", "assets/*.svg"]
+
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]

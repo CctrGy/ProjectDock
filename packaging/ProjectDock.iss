@@ -25,7 +25,8 @@ WizardStyle=modern
 ChangesEnvironment=yes
 CloseApplications=yes
 RestartApplications=no
-UninstallDisplayIcon={app}\ProjectDock.exe
+UninstallDisplayIcon={app}\ProjectDockGUI.exe
+SetupIconFile=..\src\projectdock\assets\projectdock.ico
 SetupLogging=yes
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -35,10 +36,10 @@ Name: "addtopath"; Description: "Permitir projectdock desde la terminal (PATH de
 [Files]
 Source: "..\dist\ProjectDock\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 [Icons]
-Name: "{autoprograms}\ProjectDock"; Filename: "{app}\ProjectDock.exe"; Parameters: "--gui"; WorkingDir: "{app}"
+Name: "{autoprograms}\ProjectDock"; Filename: "{app}\ProjectDockGUI.exe"; WorkingDir: "{app}"
 Name: "{autoprograms}\ProjectDock - Desinstalar"; Filename: "{uninstallexe}"
 [Run]
-Filename: "{app}\ProjectDock.exe"; Parameters: "--gui"; Description: "Abrir ProjectDock"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\ProjectDockGUI.exe"; Description: "Abrir ProjectDock"; Flags: nowait postinstall skipifsilent
 [Code]
 const
   SettingsKey = 'Software\ProjectDock\Installer';

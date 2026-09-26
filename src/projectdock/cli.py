@@ -105,6 +105,10 @@ def main(argv=None):
                 raise DockError("Falta la ruta del proyecto")
             return local(Path(args[1]).resolve(), args[2:])
         if not args or args == ["--gui"]:
+            gui_entry = Path(sys.executable).with_name("ProjectDockGUI.exe")
+            if not args and getattr(sys, "frozen", False) and gui_entry.is_file():
+                subprocess.Popen([str(gui_entry)], cwd=gui_entry.parent)
+                return 0
             from .gui import show
             show()
             return 0

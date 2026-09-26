@@ -26,6 +26,12 @@ class DockWindow:
         self.worker = None
         self.editor_path = None
         window.title("ProjectDock · Centro de proyectos")
+        icon = Path(__file__).with_name("assets") / "projectdock.png"
+        if icon.is_file():
+            self.icon = tk.PhotoImage(file=str(icon))
+            window.iconphoto(True, self.icon)
+        if os.name == "nt":
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("CctrGy.ProjectDock")
         window.geometry("1180x800")
         window.minsize(980, 650)
         window.configure(bg=BG)
