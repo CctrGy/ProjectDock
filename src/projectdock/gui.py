@@ -66,7 +66,9 @@ class DockWindow:
         self.projects = tk.Listbox(sidebar, width=26, bg=PANEL, fg=TEXT, selectbackground="#285b59", relief="flat", highlightthickness=0, font=("Segoe UI", 11), exportselection=False)
         self.projects.pack(fill="both", expand=True)
         self.projects.bind("<<ListboxSelect>>", self.select_project)
-        ttk.Button(sidebar, text="+ Incorporar proyecto", command=self.wizard).pack(fill="x", pady=(12, 5))
+        self.project_button = ttk.Button(sidebar, text="+ Incorporar proyecto", command=self.project_action)
+        self.project_button.pack(fill="x", pady=(12, 5))
+        self.new_project_button = ttk.Button(sidebar, text="+ Nuevo proyecto", command=self.wizard)
         ttk.Button(sidebar, text="Actualizar lista", command=self.refresh).pack(fill="x")
         content = ttk.Frame(body, padding=(12, 0))
         body.add(content, weight=4)
@@ -145,9 +147,30 @@ class DockWindow:
             self.projects.delete(0, "end")
             for row in self.rows:
                 self.projects.insert("end", ("● " if Path(row["path"]).is_dir() else "○ ") + row["name"])
+            for index, row in enumerate(self.rows):
+                if self.root and Path(row["path"]) == self.root:
+                    self.projects.selection_set(index)
+                    self.projects.see(index)
+                    break
+            self.update_project_button()
         self.guarded(update)
 
+    def update_project_button(self):
+        selected = bool(self.projects.curselection())
+        self.project_button.configure(text="# editar proyecto" if selected else "+ Incorporar proyecto")
+        if selected:
+            self.new_project_button.pack(fill="x", pady=(0, 5))
+        else:
+            self.new_project_button.pack_forget()
+
+    def project_action(self):
+        if self.projects.curselection():
+            self.wizard(edit=True)
+        else:
+            self.wizard()
+
     def select_project(self, _event=None):
+        self.update_project_button()
         if self.projects.curselection():
             self.root = Path(self.rows[self.projects.curselection()[0]]["path"])
             self.guarded(self.display)
@@ -364,8 +387,8 @@ class DockWindow:
             self.guarded(lambda: change_catalog(Path(path), copy))
             self.refresh()
 
-    def wizard(self):
-        folder = filedialog.askdirectory(parent=self.window, title="Seleccionar proyecto")
+    def wizard(self, edit=False):
+        folder = str(self.root) if edit and self.root else filedialog.askdirectory(parent=self.window, title="Seleccionar proyecto")
         if not folder:
             return
         root = Path(folder)
@@ -376,14 +399,26 @@ class DockWindow:
             return
         default_recipe = recipes(root).get(existing.get("default_action", ""), {}) if existing else {}
         dialog = tk.Toplevel(self.window)
-        dialog.title("Incorporar proyecto · ProjectDock")
+        dialog.title(("Editar" if edit else "Incorporar") + " proyecto · ProjectDock")
         dialog.configure(bg=BG)
         dialog.geometry("650x630")
+        dialog.minsize(540, 400)
         dialog.transient(self.window)
         dialog.grab_set()
-        frame = ttk.Frame(dialog, padding=24)
-        frame.pack(fill="both", expand=True)
-        ttk.Label(frame, text="Configura tu proyecto", font=("Segoe UI", 18, "bold")).pack(anchor="w")
+        footer = ttk.Frame(dialog, padding=(24, 12))
+        footer.pack(side="bottom", fill="x")
+        container = ttk.Frame(dialog)
+        container.pack(fill="both", expand=True)
+        canvas = tk.Canvas(container, bg=BG, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        frame = ttk.Frame(canvas, padding=24)
+        content = canvas.create_window((0, 0), window=frame, anchor="nw")
+        frame.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(content, width=event.width))
+        ttk.Label(frame, text="Edita tu proyecto" if edit else "Configura tu proyecto", font=("Segoe UI", 18, "bold")).pack(anchor="w")
         ttk.Label(frame, text=str(root), style="Muted.TLabel", wraplength=590).pack(anchor="w", pady=(4, 12))
         fields = {}
         for key, label, value in [
@@ -404,7 +439,7 @@ class DockWindow:
             variable = tk.BooleanVar(value=existing.get("tools", {}).get(name, {}).get("enabled", False))
             ttk.Checkbutton(checks, text=name, variable=variable).grid(row=index // 4, column=index % 4, sticky="w", padx=5, pady=4)
             selected[name] = variable
-        build_launcher = tk.BooleanVar(value=True)
+        build_launcher = tk.BooleanVar(value=not edit)
         ttk.Checkbutton(frame, text="Generar run.exe con su motor local", variable=build_launcher).pack(anchor="w", pady=(12, 3))
         ttk.Label(frame, text="Crear el entorno es una receta separada: environment-create.\nNo se instalarán herramientas ni se ejecutará el proyecto al registrarlo.", style="Muted.TLabel", wraplength=590).pack(anchor="w", pady=8)
         def save():
@@ -435,7 +470,9 @@ class DockWindow:
                 self.refresh()
                 self.display()
             self.guarded(work)
-        ttk.Button(frame, text="Guardar proyecto", command=save).pack(anchor="e", pady=12)
+        ttk.Button(footer, text="Guardar cambios" if edit else "add", command=save).pack(side="right")
+        ttk.Button(footer, text="Cancelar", command=dialog.destroy).pack(side="right", padx=8)
+        dialog.bind("<Escape>", lambda event: dialog.destroy())
 
     def close(self):
         if self.worker and self.worker.is_alive():
