@@ -23,6 +23,11 @@ ejecutarlo sin recordar comandos largos. El Dock central mantiene el catálogo.
 
 ## Incluido
 
+En la GUI, el formulario de incorporación se confirma con **add**.
+Al seleccionar un proyecto en **Tu dock**, el botón cambia a **# editar proyecto**;
+**+ Nuevo proyecto** permite incorporar otra carpeta. El pie del formulario
+permanece visible al reducir la ventana.
+
 - Asistente para incorporar carpetas y detectar Python, JavaScript/TypeScript,
   .NET, Rust, Go y C/C++ mediante archivos conocidos.
 - Editor integrado de configuraciones JSON, scripts vinculados y reglas Lua.

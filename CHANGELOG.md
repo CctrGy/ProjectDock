@@ -2,6 +2,11 @@
 
 ## Sin publicar — compatibilidad de lanzadores
 
+- Confirmación add siempre visible en el formulario desplazable de incorporación.
+- El botón del Dock permite editar el proyecto seleccionado y abrir uno nuevo.
+- La edición conserva la identidad del catálogo y no regenera el lanzador por defecto.
+- Entrada gráfica sin terminal visible e icono propio para Windows.
+
 - Consola heredada para TUI y consola externa desde GUI en Windows.
 - --debug-terminal conserva argumentos de la aplicación y código de salida.
 - Python explícito prevalece; crear un entorno no lo selecciona silenciosamente.
