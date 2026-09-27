@@ -148,7 +148,7 @@ class DockWindow:
             for row in self.rows:
                 self.projects.insert("end", ("● " if Path(row["path"]).is_dir() else "○ ") + row["name"])
             for index, row in enumerate(self.rows):
-                if self.root and Path(row["path"]) == self.root:
+                if self.root and Path(row["path"]).resolve() == self.root.resolve():
                     self.projects.selection_set(index)
                     self.projects.see(index)
                     break
@@ -391,7 +391,7 @@ class DockWindow:
         folder = str(self.root) if edit and self.root else filedialog.askdirectory(parent=self.window, title="Seleccionar proyecto")
         if not folder:
             return
-        root = Path(folder)
+        root = Path(folder).expanduser().resolve()
         try:
             existing = load(root) if (root / ".project/project.json").exists() else {}
         except DockError as exc:

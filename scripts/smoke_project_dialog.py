@@ -24,7 +24,7 @@ with tempfile.TemporaryDirectory(prefix="projectdock-dialog-") as directory:
     base = Path(directory)
     os.environ["PROJECTDOCK_HOME"] = str(base / "home")
     os.environ["PROJECTDOCK_CATALOG"] = str(base / "projects.db")
-    project = base / "First project"
+    project = (base / "First project").resolve()
     project.mkdir()
     (project / "main.py").write_text("print('fixture')", encoding="utf-8")
     window = tk.Tk()
