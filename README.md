@@ -201,3 +201,8 @@ PROJECTDOCK_HOME y PROJECTDOCK_CATALOG permiten aislar datos y catálogo.
 
 Pendiente de elección por el propietario. No se presupone una licencia de
 código abierto por publicar el repositorio.
+
+## Apoya el proyecto
+
+Si ProjectDock te resulta útil, puedes seguir y apoyar su desarrollo en
+[CctrGy Donations](https://cctrgy.github.io/donations.html).
